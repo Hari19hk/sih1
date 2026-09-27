@@ -70,17 +70,6 @@ export default function Header({
             Industrial Fire &amp; Wildfire Intelligence
           </div>
         </div>
-
-        {/* Divider */}
-        <div style={{ width: 1, height: 28, background: 'var(--border)', marginLeft: 8, marginRight: 4 }} />
-
-        {/* Sensor pill — minimal */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span className="pulse-dot" style={{ width: 6, height: 6, borderRadius: '50%', background: '#10B981', display: 'inline-block' }} />
-          <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'JetBrains Mono', fontWeight: 500 }}>
-            VIIRS · S2-MSI · MODIS
-          </span>
-        </div>
       </div>
 
       {/* ── CENTRE STATS (Vercel-style stat bar) ──────────── */}
@@ -90,9 +79,7 @@ export default function Header({
           alignItems: 'stretch',
           gap: 0,
           height: '100%',
-          position: 'absolute',
-          left: '50%',
-          transform: 'translateX(-50%)',
+          flexShrink: 0,
         }}
       >
         {[
@@ -127,7 +114,7 @@ export default function Header({
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'center',
-                padding: '0 20px',
+                padding: '0 16px',
                 gap: 1,
               }}
             >
