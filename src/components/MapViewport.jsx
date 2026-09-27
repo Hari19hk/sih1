@@ -57,6 +57,32 @@ export default function MapViewport({
     };
   }, []);
 
+  // Prevent browser-level page zoom when pinching on trackpads or mobile gestures
+  useEffect(() => {
+    const handleWheel = (e) => {
+      // ctrlKey is set when user pinches on macOS trackpads
+      if (e.ctrlKey) {
+        e.preventDefault();
+      }
+    };
+
+    const handleGesture = (e) => {
+      e.preventDefault();
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    window.addEventListener('gesturestart', handleGesture, { passive: false });
+    window.addEventListener('gesturechange', handleGesture, { passive: false });
+    window.addEventListener('gestureend', handleGesture, { passive: false });
+
+    return () => {
+      window.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('gesturestart', handleGesture);
+      window.removeEventListener('gesturechange', handleGesture);
+      window.removeEventListener('gestureend', handleGesture);
+    };
+  }, []);
+
   // Update map style when basemap changes
   useEffect(() => {
     if (!mapRef.current) return;
@@ -64,15 +90,23 @@ export default function MapViewport({
     mapRef.current.setStyle(bmConfig.style);
   }, [activeBasemap]);
 
-  // Synchronize MapLibre camera with Deck.gl view state
-  const handleViewStateChange = ({ viewState: newViewState }) => {
-    setViewState(newViewState);
+  // Synchronize MapLibre camera with Deck.gl view state & clear transition latency
+  const handleViewStateChange = ({ viewState: newViewState, interactionState }) => {
+    const sanitized = {
+      ...newViewState,
+      // Clear transition duration on direct user manipulation so pinch/zoom/pan is instantaneous
+      transitionDuration: 0,
+      minZoom: 3,
+      maxZoom: 18
+    };
+
+    setViewState(sanitized);
     if (mapRef.current) {
       mapRef.current.jumpTo({
-        center: [newViewState.longitude, newViewState.latitude],
-        zoom: newViewState.zoom,
-        pitch: newViewState.pitch,
-        bearing: newViewState.bearing
+        center: [sanitized.longitude, sanitized.latitude],
+        zoom: sanitized.zoom,
+        pitch: sanitized.pitch,
+        bearing: sanitized.bearing
       });
     }
   };
@@ -247,7 +281,7 @@ export default function MapViewport({
   };
 
   return (
-    <div className="relative flex-1 h-full w-full overflow-hidden bg-space-950">
+    <div className="relative flex-1 h-full w-full overflow-hidden bg-space-950" style={{ touchAction: 'none' }}>
       {/* MapLibre Map Canvas */}
       <div ref={mapContainerRef} className="absolute inset-0 w-full h-full pointer-events-none" />
 
@@ -255,9 +289,22 @@ export default function MapViewport({
       <DeckGL
         viewState={viewState}
         onViewStateChange={handleViewStateChange}
-        controller={{ dragRotate: true, touchRotate: true }}
+        controller={{
+          dragPan: true,
+          dragRotate: true,
+          scrollZoom: {
+            smooth: true,
+            speed: 0.015
+          },
+          touchZoom: true,
+          touchRotate: true,
+          doubleClickZoom: true,
+          keyboard: true,
+          inertia: 200
+        }}
+        style={{ touchAction: 'none', position: 'absolute', inset: 0 }}
         layers={layers}
-        getCursor={({ isHovering }) => (isHovering ? 'pointer' : 'grab')}
+        getCursor={({ isHovering, isDragging }) => (isDragging ? 'grabbing' : isHovering ? 'pointer' : 'grab')}
         onClick={({ object }) => {
           if (object && object.id) {
             onSelectEvent(object);
