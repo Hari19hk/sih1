@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import DeckGL from '@deck.gl/react';
+import { WebMercatorViewport } from '@deck.gl/core';
 import { ScatterplotLayer } from '@deck.gl/layers';
 import { HeatmapLayer, HexagonLayer } from '@deck.gl/aggregation-layers';
 import maplibregl from 'maplibre-gl';
 import { CLASSIFICATIONS, BASEMAPS } from '../data/categories';
+import { getFacilityIllustration } from './FacilityIllustrations';
 import { 
   ZoomIn, 
   ZoomOut, 
@@ -29,9 +31,28 @@ export default function MapViewport({
   viewState,
   setViewState
 }) {
+  const containerRef = useRef(null);
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const [hoverInfo, setHoverInfo] = useState(null);
+  const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
+
+  // Track map viewport dimensions for precise screen projection
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const updateDims = () => {
+      if (containerRef.current) {
+        setDimensions({
+          width: containerRef.current.clientWidth || window.innerWidth,
+          height: containerRef.current.clientHeight || window.innerHeight,
+        });
+      }
+    };
+    updateDims();
+    const observer = new ResizeObserver(updateDims);
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   // Initialize MapLibre GL base map
   useEffect(() => {
@@ -223,30 +244,35 @@ export default function MapViewport({
       );
     }
 
-    // 5. Selected Event Pulsing Ring / Crosshair Marker
+    // 5. Selected Event Subtle Ground Perimeter & Target Pulse Ring
     if (selectedEvent) {
+      const cat = CLASSIFICATIONS[selectedEvent.classification] || CLASSIFICATIONS.industrial_fire;
+      const rgb = cat.rgb || [239, 68, 68];
+
       list.push(
+        // Outer concentric perimeter hairline
         new ScatterplotLayer({
-          id: 'selected-highlight-outer',
+          id: 'selected-highlight-outer-ring',
           data: [selectedEvent],
           getPosition: d => [d.lon, d.lat],
-          getRadius: 1800,
+          getRadius: 1600,
           stroked: true,
           filled: false,
-          getLineColor: [255, 255, 255, 230],
-          getLineWidth: 2.5,
+          getLineColor: [...rgb, 180],
+          getLineWidth: 2,
           lineWidthUnits: 'pixels'
         }),
+        // Inner ground footprint boundary (fine accent line, NO opaque white fill)
         new ScatterplotLayer({
-          id: 'selected-highlight-center',
+          id: 'selected-highlight-ground-ring',
           data: [selectedEvent],
           getPosition: d => [d.lon, d.lat],
-          getRadius: 400,
+          getRadius: 450,
           stroked: true,
           filled: true,
-          getFillColor: [255, 255, 255, 240],
-          getLineColor: [239, 68, 68, 255],
-          getLineWidth: 3,
+          getFillColor: [...rgb, 30],
+          getLineColor: [...rgb, 255],
+          getLineWidth: 2.5,
           lineWidthUnits: 'pixels'
         })
       );
@@ -254,6 +280,30 @@ export default function MapViewport({
 
     return list;
   }, [events, selectedEvent, layersState]);
+
+  // Project selected event geospatial coords [lon, lat] to screen [px, py]
+  const selectedScreenPos = useMemo(() => {
+    if (!selectedEvent || !dimensions.width || !dimensions.height) return null;
+    try {
+      const viewport = new WebMercatorViewport({
+        width: dimensions.width,
+        height: dimensions.height,
+        longitude: viewState.longitude,
+        latitude: viewState.latitude,
+        zoom: viewState.zoom,
+        pitch: viewState.pitch || 0,
+        bearing: viewState.bearing || 0,
+      });
+      const [px, py] = viewport.project([selectedEvent.lon, selectedEvent.lat]);
+      // Verify point is inside or reasonably near viewport
+      if (px < -100 || px > dimensions.width + 100 || py < -100 || py > dimensions.height + 100) {
+        return null;
+      }
+      return { x: px, y: py };
+    } catch (e) {
+      return null;
+    }
+  }, [selectedEvent, viewState, dimensions]);
 
   // Camera Controls
   const handleZoomIn = () => {
@@ -280,8 +330,30 @@ export default function MapViewport({
     });
   };
 
+  const selectedCategory = selectedEvent ? (CLASSIFICATIONS[selectedEvent.classification] || CLASSIFICATIONS.industrial_fire) : null;
+
+  // Tag styling matching attachment 2 (pastel colors with heavy black borders and retro drop shadows)
+  const getBadgeColors = (classification) => {
+    switch (classification) {
+      case 'industrial_fire':
+        return { bg: '#FF4D6D', text: '#000000', glow: '#FF4D6D' }; // Vivid coral pink like CSE
+      case 'gas_flare':
+        return { bg: '#FBBF24', text: '#000000', glow: '#FBBF24' }; // Warm amber like IT
+      case 'mining_activity':
+        return { bg: '#38BDF8', text: '#000000', glow: '#38BDF8' }; // Sky cyan like OAT
+      case 'forest_fire':
+        return { bg: '#4ADE80', text: '#000000', glow: '#4ADE80' }; // Mint green like ECE
+      case 'agricultural_burn':
+        return { bg: '#FDE047', text: '#000000', glow: '#FDE047' }; // Bright yellow
+      default:
+        return { bg: '#FF4D6D', text: '#000000', glow: '#FF4D6D' };
+    }
+  };
+
+  const badgeColors = selectedCategory ? getBadgeColors(selectedEvent.classification) : null;
+
   return (
-    <div className="relative flex-1 h-full w-full overflow-hidden bg-space-950" style={{ touchAction: 'none' }}>
+    <div ref={containerRef} className="relative flex-1 h-full w-full overflow-hidden bg-space-950" style={{ touchAction: 'none' }}>
       {/* MapLibre Map Canvas */}
       <div ref={mapContainerRef} className="absolute inset-0 w-full h-full pointer-events-none" />
 
@@ -424,6 +496,62 @@ export default function MapViewport({
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── CAMPUS-STYLE 2.5D RETRO ARCHITECTURAL BADGE PIN ── */}
+      {selectedScreenPos && selectedEvent && (
+        <div
+          className="campus-pin-container"
+          style={{
+            left: selectedScreenPos.x,
+            top: selectedScreenPos.y,
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+          }}
+          onMouseEnter={(e) => {
+            const rect = containerRef.current?.getBoundingClientRect();
+            const mouseX = rect ? e.clientX - rect.left : selectedScreenPos.x;
+            const mouseY = rect ? e.clientY - rect.top : selectedScreenPos.y - 80;
+            setHoverInfo({
+              object: selectedEvent,
+              x: mouseX,
+              y: mouseY,
+            });
+          }}
+          onMouseMove={(e) => {
+            const rect = containerRef.current?.getBoundingClientRect();
+            if (rect) {
+              setHoverInfo({
+                object: selectedEvent,
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top,
+              });
+            }
+          }}
+          onMouseLeave={() => {
+            setHoverInfo(null);
+          }}
+        >
+          {/* Header Pill Tag — styled exactly like CSE / OAT / IT in reference */}
+          <div
+            className="campus-badge-tag"
+            style={{
+              backgroundColor: badgeColors.bg,
+              color: badgeColors.text,
+            }}
+          >
+            {selectedCategory.shortLabel}
+          </div>
+
+          {/* Architectural Facility Card with clean perspective & shadow */}
+          <div className="campus-building-card">
+            {getFacilityIllustration(selectedEvent.classification)}
+          </div>
+
+          {/* Soft Ground Elliptical Shadow anchored to coordinate */}
+          <div className="campus-ground-shadow" />
         </div>
       )}
     </div>
